@@ -2,29 +2,78 @@
 title: "DoubleML Tutorial"
 author: "Zachary Goldstein"
 date: "2023-05-12"
-output: pdf_document
+output:
+  pdf_document:
+     latex_engine: xelatex
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# Introduction
+This is a tutorial for how to use the DoubleML package in R. The package implements Double/Debiased Machine Learning for estimating causal effects.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+# Load Libraries
+```{r,warning=F,message=F}
+library(DoubleML)
+library(tidyverse)
+library(causaldata)
 ```
 
-## Including Plots
+# Example Data
 
-You can also embed plots, for example:
+For this tutorial, we'll be using data from the Current Population Survey.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+The data lets us study the effect of participation in a job-training program on
+future wages.
+
+The data is observational, it is not from an experiment and we can not assume
+that program participation is independent of the potential outcomes.
+
+Besides the main treatment and outcome variables, we have data on some covariates that we hypothesize to be related to participation
+and wages, including pre-program wages, race, age, educational attainment, and 
+marital status.
+
+For the purposes of this tutorial, we are going to assume that the observed covariates are sufficient to control for confounding. (comparisons with
+randomized experiment data have shown this may not actually be the case)
+
+```{r}
+df = cps_mixtape
+df %>% head()
+```
+# Partially Linear Model
+
+Let's start with a relatively simple option for Double Machine Learning, the 
+partially linear model. A partially linear model assumes a linear relationship
+between the treatment and outcome, but makes no such assumptions about the 
+relationships between the covariates and the outcome. We can use non-parametric
+machine learning methods of our choice to model the relationship between the 
+covariates and the outcome.
+
+The model is as follows:
+$$
+Y = D\theta_0 + g_0(X) + \zeta
+\\
+D = m_0(X) + V
+\\
+E[\zeta|D,X] = 0
+\\
+E[V|X] = 0
+$$
+
+*Y* is the continuous outcome variable **re78**, real earnings in 1978.
+*D* is the binary treatment variable **treat** corresponding to job training 
+program participation.
+*g* is a possibly non-linear function of the covariates *X* that models their
+relationship with the outcome.
+*m* is the propensity score function that predictions the probability of 
+program participation given the covariates *X*.
+𝜁and *V* are random error terms.
+
+```{r}
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
