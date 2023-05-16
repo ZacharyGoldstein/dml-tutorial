@@ -42,7 +42,25 @@ randomized experiment data have shown this may not actually be the case)
 df = cps_mixtape
 df %>% head()
 ```
+
+## Feature engineering
+
+```{r}
+df = df %>% 
+  mutate(age_squared = age**2,
+         age_under_35 = as.numeric(age<35),
+         black_or_hispanic = as.numeric(black==1|hisp==1),
+         # Average the income from the 2 years of data pre-program
+         avg_pre_income = re74+re75/2,
+         # Binary indicator for 12+ years of educational attainment
+         educ_12_plus = as.numeric(educ>=12),
+         )
+```
+
+
 # Partially Linear Model
+
+## Theoretical Overview
 
 Let's start with a relatively simple option for Double Machine Learning, the 
 partially linear model. A partially linear model assumes a linear relationship
@@ -65,15 +83,95 @@ $$
 *Y* is the continuous outcome variable **re78**, real earnings in 1978.
 *D* is the binary treatment variable **treat** corresponding to job training 
 program participation.
-*g* is a possibly non-linear function of the covariates *X* that models their
+$\theta_0$ is the effect of the treatment on the outcome.
+$g_0$ is a possibly non-linear function of the covariates *X* that models their
 relationship with the outcome.
 *m* is the propensity score function that predictions the probability of 
 program participation given the covariates *X*.
 𝜁and *V* are random error terms.
 
+## DoubleMLPLR function
+
+### "New" method
+The DoubleML R package implementation for the partially linear regression model is 
+the function DoubleMLPLR. To create a new model, we use the "new" method,
+as follows:
+
 ```{r}
-
+plm = DoubleMLPLR$new(
+  data = ,
+  ml_l = ,
+  ml_m = ,
+  ml_g = ,
+  n_folds = 5,
+  n_rep = 1,
+  score = "partialling out",
+  dml_procedure = "dml2",
+  draw_sample_splitting = TRUE,
+  apply_cross_fitting = TRUE
+)
 ```
+#### Score
+
+The score is which formula we use for estimating $\theta_0$, the effect of the treatment
+on the outcome. The package gives us two options for the partially linear model score, the 
+"partialling out" score and the "IV-type" score. In the former, we
+set `score='partialling out'` and set learners `ml_l` and `ml_m`. In the latter,
+we set `score='IV-type` and set learners `ml_l`, `ml_m`, and `ml_g`.
+
+The partialling out approach uses the following formula:
+$$
+\check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i \hat{V}_i \right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{\ell}_0(X_i))
+$$
+
+And the IV-type uses the following formula:
+$$\check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i D_i\right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{g}_0(X_i))
+$$
+
+TODO: EXPLAIN MORE ABOUT FORMULAS, ORTHOGONALIZATION, PROS/CONS OF EACH
+
+#### Learners
+
+#### DML Procedure
+
+#### Sample Splitting
+
+discuss n_rep
+
+#### Cross Fitting
+
+discuss n_folds
 
 
+
+# Scratch
+
+DoubleMLPLR$new()
+
+DoubleMLPLR$set_ml_nuisance_params()
+
+DoubleMLPLR$tune()
+
+DoubleMLPLR$clone()
+
+Inherited methods
+DoubleML::DoubleML$bootstrap()
+DoubleML::DoubleML$confint()
+DoubleML::DoubleML$fit()
+DoubleML::DoubleML$get_params()
+DoubleML::DoubleML$learner_names()
+DoubleML::DoubleML$p_adjust()
+DoubleML::DoubleML$params_names()
+DoubleML::DoubleML$print()
+DoubleML::DoubleML$set_sample_splitting()
+DoubleML::DoubleML$split_samples()
+DoubleML::DoubleML$summary()
+
+If I want even more content, I can discuss IV or cluster data or interactive regression.
+
+# Citations
+
+Bach, P., Chernozhukov, V., Kurz, M. S., and Spindler, M. (2021), DoubleML - An Object-Oriented Implementation of Double Machine Learning in R, arXiv:2103.09603.
+
+Chernozhukov, V., Chetverikov, D., Demirer, M., Duflo, E., Hansen, C., Newey, W., & Robins, J. (2018). Double/debiased machine learning for treatment and structural parameters.
 
