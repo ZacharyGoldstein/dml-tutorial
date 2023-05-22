@@ -19,6 +19,10 @@ This is a tutorial for how to use the DoubleML package in R. The package impleme
 library(DoubleML)
 library(tidyverse)
 library(causaldata)
+library(mlr3)
+library(mlr3learners)
+library(data.table)
+set.seed(40601)
 ```
 
 # Example Data
@@ -28,7 +32,7 @@ For this tutorial, we'll be using data from the Current Population Survey.
 The data lets us study the effect of participation in a job-training program on
 future wages.
 
-The data is observational, it is not from an experiment and we can not assume
+The data is observational, participation was not randomized and we can not assume
 that program participation is independent of the potential outcomes.
 
 Besides the main treatment and outcome variables, we have data on some covariates that we hypothesize to be related to participation
@@ -39,7 +43,8 @@ For the purposes of this tutorial, we are going to assume that the observed cova
 randomized experiment data have shown this may not actually be the case)
 
 ```{r}
-df = cps_mixtape
+# Combine the randomized experiment data with the control-group-only observational data
+df = cps_mixtape %>% bind_rows(nsw_mixtape)
 df %>% head()
 ```
 
@@ -97,20 +102,47 @@ The DoubleML R package implementation for the partially linear regression model 
 the function DoubleMLPLR. To create a new model, we use the "new" method,
 as follows:
 
-```{r}
-plm = DoubleMLPLR$new(
-  data = ,
-  ml_l = ,
-  ml_m = ,
-  ml_g = ,
+```{r,message=F}
+l_rf = lrn("regr.ranger", max.depth = 5, min.node.size = 1)
+m_rf = lrn("classif.ranger", max.depth = 3, min.node.size = 6)
+
+non_covariates = c("data_id","treat","re78")
+covariates = setdiff(names(df),non_covariates)
+df_dml = df %>% 
+  data.table %>% 
+  double_ml_data_from_data_frame(y_col = "re78", d_cols = "treat",x_cols = covariates)
+
+# Create a wrapper so I can set my own default parameters
+# Then throughout the tutorial, I can make it clear which arguments deviate
+# from the default in each example
+DoubleMLPLR_new_wrapper = function(data = df_dml,
+  ml_l = l_rf,
+  ml_m = m_rf,
+  ml_g = NULL,
   n_folds = 5,
   n_rep = 1,
   score = "partialling out",
   dml_procedure = "dml2",
   draw_sample_splitting = TRUE,
-  apply_cross_fitting = TRUE
-)
+  apply_cross_fitting = TRUE){
+  model = DoubleMLPLR$new(
+   data=data,ml_l=ml_l,ml_m=ml_m,ml_g=ml_g,n_folds=n_folds,n_rep=n_rep,
+   score=score,dml_procedure=dml_procedure,
+   draw_sample_splitting=draw_sample_splitting,
+   apply_cross_fitting=apply_cross_fitting)
+}
+
+# Start out matching default parameters exactly
+plm_ref = DoubleMLPLR_new_wrapper()
+
+plm_ref$fit()
 ```
+
+```{r}
+plm_ref
+```
+
+
 #### Score
 
 The score is which formula we use for estimating $\theta_0$, the effect of the treatment
@@ -119,18 +151,74 @@ on the outcome. The package gives us two options for the partially linear model 
 set `score='partialling out'` and set learners `ml_l` and `ml_m`. In the latter,
 we set `score='IV-type` and set learners `ml_l`, `ml_m`, and `ml_g`.
 
-The partialling out approach uses the following formula:
+The partialling out approach uses the following formula in
+which $\hat{l_0}(X_i) = E(Y|X)$:
 $$
 \check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i \hat{V}_i \right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{\ell}_0(X_i))
 $$
 
+
 And the IV-type uses the following formula:
 $$\check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i D_i\right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{g}_0(X_i))
 $$
-
+$$$$
 TODO: EXPLAIN MORE ABOUT FORMULAS, ORTHOGONALIZATION, PROS/CONS OF EACH
+compare results using different function arguments, e.g. score in tutorial for DML
+
+The partialling-out score partials out the associations between:
+1) the covariates and the treatment
+and between
+2) the outcome and the covariates given treatment.
+
+This is a form of orthogonalization, which is used to remove regularization bias.
+
+The "IV-type" score is not intended for instrumental variables problems in which
+we use a valid instrument to estimate a local average treatment effect even though
+the potential outcomes can't be assumed to be independent of the treatment given
+the observed covariates. DoubleML supports instrumental variables estimation,
+but that's done with a separate function: `DoubleMLPLIV`. 
+
+The "IV-type" is still intended for a selection-on-observables
+problem in which all confounding variables are observed.
+It is called "IV-type" because the scoring procedure
+resembles that of an instrumental variables estimation procedure like 
+two stage least squares. 
+
+According to Chernozhukov and coauthors' 2018 paper, the two scores are 
+"first-order equivalent." The DoubleML package user guide says that a minor
+advantage of the partialling out estimator is that the nuisance parameters 
+`l` and `m` can both be directly estimated using machine learning, whereas 
+`g` (which is needed for the IV-type score) cannot.
+
+```{r,message=F}
+plm_iv_type = DoubleMLPLR_new_wrapper(score = "IV-type",
+                                      ml_g = l_rf$clone())
+plm_iv_type$fit()
+```
+```{r}
+plm_iv_type
+```
+
 
 #### Learners
+
+The DoubleML package uses the mlr3 R package which supports many commonly used
+supervised learning algorithms, including generalized linear models with 
+regularization penalties, k-nearest neighbors, naive bayes, neural networks,
+random forest, support vector machines, and gradient boosting.
+
+You could also select an ensemble of different algorithms, or try multiple 
+options and select the one with the best performance. 
+
+The documentation shows regression algorithms are used for estimating l, m and g.
+However, since m is a propensity score, it predicts a categorical outcome, so I
+would imagine it is sensible to select a classification algorithm for it, as I 
+have done in the default example in this tutorial, where I selected random forest
+of regression trees for estimating the conditional mean function `l` and a random
+forest of classification trees for estimating the propensity score `m`.
+
+
+#### TO DO: SHOW HOW TO EVALUATE / COMPARE LEARNERS
 
 #### DML Procedure
 
