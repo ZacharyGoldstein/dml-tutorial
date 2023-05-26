@@ -8,7 +8,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,cache=FALSE)
 ```
 
 # Introduction
@@ -77,11 +77,14 @@ covariates and the outcome.
 The model is as follows:
 $$
 Y = D\theta_0 + g_0(X) + \zeta
-\\
+$$
+$$
 D = m_0(X) + V
-\\
+$$
+$$
 E[\zeta|D,X] = 0
-\\
+$$
+$$
 E[V|X] = 0
 $$
 
@@ -97,12 +100,11 @@ program participation given the covariates *X*.
 
 ## DoubleMLPLR function
 
-### "New" method
 The DoubleML R package implementation for the partially linear regression model is 
 the function DoubleMLPLR. To create a new model, we use the "new" method,
 as follows:
 
-```{r,message=F}
+```{r,message=F,results='hide'}
 l_rf = lrn("regr.ranger", max.depth = 5, min.node.size = 1)
 m_rf = lrn("classif.ranger", max.depth = 3, min.node.size = 6)
 
@@ -138,15 +140,18 @@ plm_ref = DoubleMLPLR_new_wrapper()
 plm_ref$fit()
 ```
 
+Printing the model outputs a summary of the variables and methodological parameters.
+Then it prints out a summary of the results, including the point estimate, 
+standard error, test statistic, and p-value for the average treatment effect. 
 ```{r}
 plm_ref
 ```
 
 
-#### Score
+### Score
 
 The score is which formula we use for estimating $\theta_0$, the effect of the treatment
-on the outcome. The package gives us two options for the partially linear model score, the 
+on the outcome. The package gives us two options for the partially linear model `score` argument, the 
 "partialling out" score and the "IV-type" score. In the former, we
 set `score='partialling out'` and set learners `ml_l` and `ml_m`. In the latter,
 we set `score='IV-type` and set learners `ml_l`, `ml_m`, and `ml_g`.
@@ -159,11 +164,10 @@ $$
 
 
 And the IV-type uses the following formula:
-$$\check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i D_i\right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{g}_0(X_i))
 $$
-$$$$
-TODO: EXPLAIN MORE ABOUT FORMULAS, ORTHOGONALIZATION, PROS/CONS OF EACH
-compare results using different function arguments, e.g. score in tutorial for DML
+\check{\theta}_0 = \left(\frac{1}{n} \sum_{i\in I} \hat{V}_i D_i\right)^{-1} \frac{1}{n} \sum_{i\in I} \hat{V}_i (Y_i - \hat{g}_0(X_i))
+$$
+
 
 The partialling-out score partials out the associations between:
 1) the covariates and the treatment
@@ -190,7 +194,7 @@ advantage of the partialling out estimator is that the nuisance parameters
 `l` and `m` can both be directly estimated using machine learning, whereas 
 `g` (which is needed for the IV-type score) cannot.
 
-```{r,message=F}
+```{r,message=F,results='hide'}
 plm_iv_type = DoubleMLPLR_new_wrapper(score = "IV-type",
                                       ml_g = l_rf$clone())
 plm_iv_type$fit()
@@ -199,8 +203,7 @@ plm_iv_type$fit()
 plm_iv_type
 ```
 
-
-#### Learners
+### Learners
 
 The DoubleML package uses the mlr3 R package which supports many commonly used
 supervised learning algorithms, including generalized linear models with 
@@ -217,49 +220,147 @@ have done in the default example in this tutorial, where I selected random fores
 of regression trees for estimating the conditional mean function `l` and a random
 forest of classification trees for estimating the propensity score `m`.
 
+### DML Procedure
 
-#### TO DO: SHOW HOW TO EVALUATE / COMPARE LEARNERS
+The DML package gives us two options for the `dml_procedure` argument, "dml1" and
+"dml2". This lets us choose between two slightly different algorithms.
 
-#### DML Procedure
+"dml1" estimates the causal parameters first on each of k folds of the data
+separately, and then averages them together for an estimate of the causal 
+parameter.
 
-#### Sample Splitting
+In the following equations:
+*N* is the sample size of the data.
+*K* is the number of folds (and *k* is a single fold)
+*n* is the sample size of a single fold (N/K)
+*I* is a single fold.
+$\psi$ is the score function.
 
-discuss n_rep
+$$
+\frac{1}{n} \sum_{i \in I_k} \psi(W_i; \check{\theta}_{0,k}, \hat{\eta}_{0,k}) = 0.
+$$
+$$
+\tilde{\theta}_0 = \frac{1}{K} \sum_{k=1}^{K} \check{\theta}_{0,k}.
+$$
 
-#### Cross Fitting
+"dml2" estimates the causal parameters in a single step by solving an equation
+involving a double summation, first over the folds, and then over the entries within each fold.
 
-discuss n_folds
+$$
+ \frac{1}{N} \sum_{k=1}^{K} \sum_{i \in I_k} \psi(W_i; \tilde{\theta}_0, \hat{\eta}_{0,k}) = 0.
+$$
+
+According to the paper, DML2 is generally recommended over DML1, however there 
+are some problems (e.g. ATE estimation in the interactive model) where either approach
+yields the same result. DML2 is generally recommended because the pooled empirical
+Jacobian is more stable than the separate empirical Jacobians. They also note that
+DML2 may behave better in small samples.
+
+Since `dml2` is the default, here I'll show a version using `dml1`.
+
+```{r,results='hide'}
+plm_dml1 = DoubleMLPLR_new_wrapper(dml_procedure = "dml1")
+plm_dml1$fit()
+```
+
+```{r}
+plm_dml1
+```
 
 
+### Cross Fitting
 
-# Scratch
+To avoid overfitting bias, Double Machine Learning splits the sample into subsets.
+The *g* and *m* models are estimated using one subset, while the scoring estimation
+is performed with the other subset. This is done in the `DoubleMLPLR$new` function by setting `draw_sample_splitting` to `TRUE`. It is always a good idea to do sample splitting for DML, so if you set this argument to `FALSE`, you'll want to do sample splitting separately using a more customized approach with the `set_sample_splitting` method.
 
-DoubleMLPLR$new()
+However, a weakness of sample-splitting is 
+the loss of statistical power since each part of the estimation is only being
+done with half the sample size. 
+To maintain the ability to evaluate on a held-out set without a loss of power, the authors propose "cross-fitting", in which 
+sample-splitting is done twice, with each half of the data getting a turn to do
+each step. Then, the results are averaged together. You can use cross-fitting by leaving the `apply_cross_fitting` argument at its default value of `TRUE`.
 
-DoubleMLPLR$set_ml_nuisance_params()
+However, having two equally-sized folds, one for nuisance parameter estimation
+and one for scoring is not the only option. The authors propose another approach
+in which the data is split into k equally-sized parts, such as k=5, and each time
+all but one of the folds is used for nuisance parameter estimation, while just one
+is used for scoring. This is implemented in the DML package by setting the `n_folds`
+argument.
 
-DoubleMLPLR$tune()
+The authors find that standard errors of estimates are generally lower when
+using 5-fold cross-fitting than 2-fold. The estimates are more precise when
+most of the data is used to estimate the nuisance parameters than when the data
+is split evenly between the two parts of the procedure. However, it is not as 
+straightforward a relationship as "the more folds, the more precise the estimates".
+The optimal number of folds seems to depend on a number of factors, and is not fully understood.
 
-DoubleMLPLR$clone()
+#### Repeated Cross-Fitting
 
-Inherited methods
-DoubleML::DoubleML$bootstrap()
-DoubleML::DoubleML$confint()
-DoubleML::DoubleML$fit()
-DoubleML::DoubleML$get_params()
-DoubleML::DoubleML$learner_names()
-DoubleML::DoubleML$p_adjust()
-DoubleML::DoubleML$params_names()
-DoubleML::DoubleML$print()
-DoubleML::DoubleML$set_sample_splitting()
-DoubleML::DoubleML$split_samples()
-DoubleML::DoubleML$summary()
+By default, cross-fitting only happens once. But if you change
+`n_rep` to a value higher than 1, cross-fitting will be repeated `n_rep` times.
 
-If I want even more content, I can discuss IV or cluster data or interactive regression.
+The advantage of repeated cross-fitting is that it can 
+reduce sensitivity to particular sample splits. You can
+then calculate the point estimate as the median of the point estimates across all the different splits. You can also use the repeated cross-fitting to estimate a standard error. The procedure for this is described in Zivich et al (2021).
+
+The advantage of just doing a single round of cross-fitting is it reduces the 
+runtime needed to carry out the procedure, as well as simplifying 
+the cross-fitting process.
+
+## Inference
+
+### Bootstrapping
+
+DML supports bootstrapping of coefficients and t-statistics using the `bootstrap()`
+method and the `boot_coef` and `boot_t_stat` attributes. It supports a "normal",
+"wild", and "Bayes" bootstrap method. The number of resamples is specified by the
+`n_rep_boot` argument.
+
+For example:
+```{r}
+boot_results = plm_ref$bootstrap(method='normal',n_rep_boot=500)
+boot_results$boot_coef[1:10]
+boot_results$boot_t_stat[1:10]
+```
+
+You can then use the bootstrapped results to estimate standard errors and 
+confidence intervals.
+
+### Confidence Intervals
+
+Here's a 95% confidence interval for the average treatment effect:
+```{r}
+boot_results$confint(joint=F,level=.95)
+```
+
+It contains zero, suggesting the result is not statistically significant.
+
+# Beyond the PLR Model
+
+The DML package also supports more complex models than the partially linear 
+regression model. 
+
+## Instrumental Variables
+
+If you have an instrumental variable, that is, a variable that exogenously affects the treatment without having a separate effect on the outcome, you can use `DoubleMLPLIV` to model that.
+
+## Clustered Data
+
+The DML package supports cluster-robust cross-fitting for 
+clustered data using `DoubleMLClusterData`.
+
+## Interactive Regression
+
+An interactive regression model using `DoubleMLIRM` does not assume that the treatment has a simple linear relationship with the outcome. It allows for interactions between the treatment term and the covariates. 
+
+The DML package also supports interactive regression models with instrumental variables using `DoubleMLIIVM`.
 
 # Citations
 
 Bach, P., Chernozhukov, V., Kurz, M. S., and Spindler, M. (2021), DoubleML - An Object-Oriented Implementation of Double Machine Learning in R, arXiv:2103.09603.
 
 Chernozhukov, V., Chetverikov, D., Demirer, M., Duflo, E., Hansen, C., Newey, W., & Robins, J. (2018). Double/debiased machine learning for treatment and structural parameters.
+
+Zivich, P. N., & Breskin, A. (2021). Machine learning for causal inference: on the use of cross-fit estimators. Epidemiology (Cambridge, Mass.), 32(3), 393.
 
